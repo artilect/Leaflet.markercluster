@@ -4,7 +4,8 @@ var deps = {
 		src: ['MarkerClusterGroup.js',
 		      'MarkerCluster.js',
 		      'DistanceGrid.js',
-		      'MarkerClusterGroup.DefaultClusterer.js'],
+		      'MarkerClusterGroup.DefaultClusterer.js',
+		      'MarkerClusterGroup.TestClusterer.js'],
 		desc: 'The core of the library.'
 	},
 

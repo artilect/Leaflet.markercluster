@@ -128,7 +128,8 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 	},
 
 	//Default functionality
-	_defaultIconCreateFunction: function (childCount) {
+	_defaultIconCreateFunction: function (markerCluster, text) {
+		var childCount = markerCluster._childCount;
 		var c = ' marker-cluster-';
 		if (childCount < 10) {
 			c += 'small';
@@ -138,7 +139,11 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 			c += 'large';
 		}
 
-		return new L.DivIcon({ html: '<div><span>' + childCount + '</span></div>', className: 'marker-cluster' + c, iconSize: new L.Point(40, 40) });
+		if (!text || text === "undefined") {
+			text = "";
+		}
+
+		return new L.DivIcon({ html: '<div><span>' + text + '(' + childCount + ')</span></div>', className: 'marker-cluster' + c, iconSize: new L.Point(40, 40) });
 	},
 
 	_bindEvents: function () {

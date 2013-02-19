@@ -5,26 +5,30 @@
 */
 (function (window, undefined) {
 
-
 /*
  * L.MarkerClusterGroup extends L.FeatureGroup by clustering the markers contained within
  */
 
 L.MarkerClusterGroup = L.FeatureGroup.extend({
-
 	options: {
 		maxClusterRadius: 80, //A cluster will cover at most this many pixels from its center
 		iconCreateFunction: null,
 
 		spiderfyOnMaxZoom: true,
 		showCoverageOnHover: true,
-		zoomToBoundsOnClick: true
+		zoomToBoundsOnClick: true,
+
+		clusterer : null
 	},
 
 	initialize: function (options) {
 		L.Util.setOptions(this, options);
 		if (!this.options.iconCreateFunction) {
 			this.options.iconCreateFunction = this._defaultIconCreateFunction;
+		}
+
+		if (!this.options.clusterer) {
+			this.options.clusterer = new L.MarkerClusterGroup.DefaultClusterer(this.options.maxClusterRadius);
 		}
 
 		L.FeatureGroup.prototype.initialize.call(this, []);
@@ -131,7 +135,8 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 	},
 
 	//Default functionality
-	_defaultIconCreateFunction: function (childCount) {
+	_defaultIconCreateFunction: function (markerCluster, text) {
+		var childCount = markerCluster._childCount;
 		var c = ' marker-cluster-';
 		if (childCount < 10) {
 			c += 'small';
@@ -141,7 +146,11 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 			c += 'large';
 		}
 
-		return new L.DivIcon({ html: '<div><span>' + childCount + '</span></div>', className: 'marker-cluster' + c, iconSize: new L.Point(40, 40) });
+		if (!text || text === "undefined") {
+			text = "";
+		}
+
+		return new L.DivIcon({ html: '<div><span>' + text + '(' + childCount + ')</span></div>', className: 'marker-cluster' + c, iconSize: new L.Point(40, 40) });
 	},
 
 	_bindEvents: function () {
@@ -265,80 +274,8 @@ L.MarkerClusterGroup = L.FeatureGroup.extend({
 		}
 	},
 
-	//Takes a list of markers and clusters the new marker in to them
-	//Will return null or the new MarkerCluster. The clustered in marker is removed from the given array
-	_clusterOne: function (unclustered, newMarker, markerPoint) {
-		var marker = unclustered.getNearObject(markerPoint);
-
-		if (marker) {
-			// create a new cluster with these 2
-			unclustered.removeObject(marker);
-			return new L.MarkerCluster(this, marker, newMarker);
-		}
-
-		return null;
-	},
-
-	//Takes a list of objects that have a 'getLatLng()' function (Marker / MarkerCluster)
-	//Performs clustering on them (using a greedy algorithm) and returns those clusters.
-	//markers: List of Markers/MarkerClusters to cluster
-	//Returns { 'clusters': [new clusters], 'unclustered': [unclustered markers] }
 	_cluster: function (markers, zoom) {
-		var radius = this.options.maxClusterRadius,
-		    clusters = new L.DistanceGrid(radius),
-		    unclustered = new L.DistanceGrid(radius),
-		    i, j, marker, markerPoint, cluster, newCluster;
-
-		// go through each point
-		for (i = markers.length - 1; i >= 0; i--) {
-			marker = markers[i];
-			markerPoint = this._map.project(marker.getLatLng(), zoom); // calculate pixel position
-
-			// try add it to an existing cluster
-			cluster = clusters.getNearObject(markerPoint);
-
-			if (cluster) {
-				cluster._addChild(marker);
-			} else {
-				// otherwise, look through all of the markers we haven't managed to cluster and see if we should form a cluster with them
-				newCluster = this._clusterOne(unclustered, marker, markerPoint);
-				if (newCluster) {
-					clusters.addObject(newCluster, this._map.project(newCluster.getLatLng(), zoom));
-				} else {
-					// didn't manage to use it
-					unclustered.addObject(marker, markerPoint);
-				}
-			}
-		}
-
-		var result = [],
-			group = this;
-
-		// any clusters that did not end up being a child of a new cluster, make them a child of a new cluster
-		unclustered.eachObject(function (cluster) {
-			if (cluster instanceof L.MarkerCluster) {
-				newCluster = new L.MarkerCluster(group, cluster);
-				newCluster._haveGeneratedChildClusters = true;
-
-				clusters.addObject(newCluster, cluster._dGridPoint);
-				unclustered.removeObject(cluster);
-
-				return true;
-			}
-			return false;
-		});
-
-		unclustered.eachObject(function (marker) {
-			result.push(marker);
-		});
-
-		// initialize created clusters
-		clusters.eachObject(function (cluster) {
-			cluster._baseInit();
-			result.push(cluster);
-		});
-
-		return result;
+		return this.options.clusterer.performClustering(this, markers, zoom);
 	},
 
 	//Clusters the given markers (with _cluster) and returns the result as a MarkerCluster
@@ -583,7 +520,7 @@ L.MarkerCluster = L.Marker.extend({
 
 	_baseInit: function () {
 		this._latlng = this._wLatLng;
-		L.Marker.prototype.initialize.call(this, this._latlng, { icon: this._group.options.iconCreateFunction(this._childCount) });
+		L.Marker.prototype.initialize.call(this, this._latlng, { icon: this._group.options.iconCreateFunction(this, this._regName) });
 	},
 
 	_addChild: function (new1) {
@@ -591,13 +528,15 @@ L.MarkerCluster = L.Marker.extend({
 		if (new1 instanceof L.MarkerCluster) {
 			this._childClusters.push(new1);
 			this._childCount += new1._childCount;
-		} else {
+		} else if (new1 instanceof L.Marker) {
 			this._markers.push(new1);
 			this._childCount++;
+		} else {
+			throw "Bad marker type for " + new1;
 		}
 
 		if (this._icon) {
-			this.setIcon(this._group.options.iconCreateFunction(this._childCount));
+			this.setIcon(this._group.options.iconCreateFunction(this, this._regName));
 		}
 
 	},
@@ -726,7 +665,7 @@ L.MarkerCluster = L.Marker.extend({
 
 		if (result) {
 			if (!('_zoom' in this)) {
-				this.setIcon(this._group.options.iconCreateFunction(this._childCount));
+				this.setIcon(this._group.options.iconCreateFunction(this));
 			}
 			this._recalculateBounds();
 		}
@@ -771,7 +710,7 @@ L.MarkerCluster = L.Marker.extend({
 				this._recalculateBounds();
 
 				if (!('_zoom' in this)) {
-					this.setIcon(group.options.iconCreateFunction(this._childCount));
+					this.setIcon(group.options.iconCreateFunction(this));
 				}
 				return true;
 			}
@@ -784,7 +723,7 @@ L.MarkerCluster = L.Marker.extend({
 			if (child._bounds.contains(layer._latlng) && child._recursivelyRemoveLayer(layer)) {
 				this._childCount--;
 				if (!('_zoom' in this)) {
-					this.setIcon(group.options.iconCreateFunction(this._childCount));
+					this.setIcon(group.options.iconCreateFunction(this));
 				}
 
 				//if our child cluster is no longer a cluster, remove it and replace with just the marker
@@ -804,7 +743,7 @@ L.MarkerCluster = L.Marker.extend({
 				this._recalculateBounds();
 
 				if (this._icon && this._childCount > 1) { //No need to update if we are getting removed anyway
-					this.setIcon(group.options.iconCreateFunction(this._childCount));
+					this.setIcon(group.options.iconCreateFunction(this));
 				}
 				return true;
 			}
@@ -1134,6 +1073,133 @@ L.DistanceGrid.prototype = {
 	}
 };
 
+
+L.MarkerClusterGroup.DefaultClusterer = function (cellSize) {
+	this._cellSize = cellSize;
+};
+
+L.MarkerClusterGroup.DefaultClusterer.prototype = {
+
+	//Takes a list of objects that have a 'getLatLng()' function (Marker / MarkerCluster)
+	//Performs clustering on them (using a greedy algorithm) and returns those clusters.
+	//markers: List of Markers/MarkerClusters to cluster
+	//Returns { 'clusters': [new clusters], 'unclustered': [unclustered markers] }
+	performClustering: function (clusterGroup, markers, zoom) {
+		var radius = this._cellSize,
+		    clusters = new L.DistanceGrid(radius),
+		    unclustered = new L.DistanceGrid(radius),
+		    i, marker, markerPoint, cluster, newCluster;
+
+		// go through each point
+		for (i = markers.length - 1; i >= 0; i--) {
+			marker = markers[i];
+			markerPoint = clusterGroup._map.project(marker.getLatLng(), zoom); // calculate pixel position
+
+			// try add it to an existing cluster
+			cluster = clusters.getNearObject(markerPoint);
+
+			if (cluster) {
+				cluster._addChild(marker);
+			} else {
+				// otherwise, look through all of the markers we haven't managed to cluster and see if we should form a cluster with them
+				newCluster = this._clusterOne(clusterGroup, unclustered, marker, markerPoint);
+				if (newCluster) {
+					clusters.addObject(newCluster, clusterGroup._map.project(newCluster.getLatLng(), zoom));
+				} else {
+					// didn't manage to use it
+					unclustered.addObject(marker, markerPoint);
+				}
+			}
+		}
+
+		var result = [],
+			group = clusterGroup;
+
+		// any clusters that did not end up being a child of a new cluster, make them a child of a new cluster
+		unclustered.eachObject(function (cluster) {
+			if (cluster instanceof L.MarkerCluster) {
+				newCluster = new L.MarkerCluster(group, cluster);
+				newCluster._haveGeneratedChildClusters = true;
+
+				clusters.addObject(newCluster, cluster._dGridPoint);
+				unclustered.removeObject(cluster);
+
+				return true;
+			}
+			return false;
+		});
+
+		unclustered.eachObject(function (marker) {
+			result.push(marker);
+		});
+
+		// initialize created clusters
+		clusters.eachObject(function (cluster) {
+			cluster._baseInit();
+			result.push(cluster);
+		});
+
+		return result;
+	},
+
+	//Takes a list of markers and clusters the new marker in to them
+	//Will return null or the new MarkerCluster. The clustered in marker is removed from the given array
+	_clusterOne: function (clusterGroup, unclustered, newMarker, markerPoint) {
+		var marker = unclustered.getNearObject(markerPoint);
+
+		if (marker) {
+			// create a new cluster with these 2
+			unclustered.removeObject(marker);
+			return new L.MarkerCluster(clusterGroup, marker, newMarker);
+		}
+
+		return null;
+	}
+};
+
+L.MarkerClusterGroup.TestClusterer = function (cellSize) {
+};
+
+L.MarkerClusterGroup.TestClusterer.prototype = {
+
+	//Takes a list of objects that have a 'getLatLng()' function (Marker / MarkerCluster)
+	//Performs clustering on them (using a greedy algorithm) and returns those clusters.
+	//markers: List of Markers/MarkerClusters to cluster
+	//Returns { 'clusters': [new clusters], 'unclustered': [unclustered markers] }
+	performClustering: function (clusterGroup, markers, zoom) {
+		var result = [];
+		// initialize created clusters
+		var first = new L.MarkerCluster(clusterGroup, markers[0]);
+
+		result.push(first);
+
+
+		for (var i = 1; i < 2 /*markers.length*/; i++) {
+			var mc = new L.MarkerCluster(clusterGroup, markers[i], first);
+//			first.addChild();
+//			result.push(mc);
+//			mc._baseInit();
+//			first._addChild(mc);
+		}
+
+		first._baseInit();
+		return result;
+	},
+
+	//Takes a list of markers and clusters the new marker in to them
+	//Will return null or the new MarkerCluster. The clustered in marker is removed from the given array
+	_clusterOne: function (clusterGroup, unclustered, newMarker, markerPoint) {
+		var marker = unclustered.getNearObject(markerPoint);
+
+		if (marker) {
+			// create a new cluster with these 2
+			unclustered.removeObject(marker);
+			return new L.MarkerCluster(clusterGroup, marker, newMarker);
+		}
+
+		return null;
+	}
+};
 
 /* Copyright (c) 2012 the authors listed at the following URL, and/or
 the authors of referenced articles or incorporated external code:

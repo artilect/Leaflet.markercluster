@@ -43,7 +43,7 @@ L.MarkerCluster = L.Marker.extend({
 
 	_baseInit: function () {
 		this._latlng = this._wLatLng;
-		L.Marker.prototype.initialize.call(this, this._latlng, { icon: this._group.options.iconCreateFunction(this._childCount) });
+		L.Marker.prototype.initialize.call(this, this._latlng, { icon: this._group.options.iconCreateFunction(this, this._regName) });
 	},
 
 	_addChild: function (new1) {
@@ -51,13 +51,15 @@ L.MarkerCluster = L.Marker.extend({
 		if (new1 instanceof L.MarkerCluster) {
 			this._childClusters.push(new1);
 			this._childCount += new1._childCount;
-		} else {
+		} else if (new1 instanceof L.Marker) {
 			this._markers.push(new1);
 			this._childCount++;
+		} else {
+			throw "Bad marker type for " + new1;
 		}
 
 		if (this._icon) {
-			this.setIcon(this._group.options.iconCreateFunction(this._childCount));
+			this.setIcon(this._group.options.iconCreateFunction(this, this._regName));
 		}
 
 	},
@@ -186,7 +188,7 @@ L.MarkerCluster = L.Marker.extend({
 
 		if (result) {
 			if (!('_zoom' in this)) {
-				this.setIcon(this._group.options.iconCreateFunction(this._childCount));
+				this.setIcon(this._group.options.iconCreateFunction(this));
 			}
 			this._recalculateBounds();
 		}
@@ -231,7 +233,7 @@ L.MarkerCluster = L.Marker.extend({
 				this._recalculateBounds();
 
 				if (!('_zoom' in this)) {
-					this.setIcon(group.options.iconCreateFunction(this._childCount));
+					this.setIcon(group.options.iconCreateFunction(this));
 				}
 				return true;
 			}
@@ -244,7 +246,7 @@ L.MarkerCluster = L.Marker.extend({
 			if (child._bounds.contains(layer._latlng) && child._recursivelyRemoveLayer(layer)) {
 				this._childCount--;
 				if (!('_zoom' in this)) {
-					this.setIcon(group.options.iconCreateFunction(this._childCount));
+					this.setIcon(group.options.iconCreateFunction(this));
 				}
 
 				//if our child cluster is no longer a cluster, remove it and replace with just the marker
@@ -264,7 +266,7 @@ L.MarkerCluster = L.Marker.extend({
 				this._recalculateBounds();
 
 				if (this._icon && this._childCount > 1) { //No need to update if we are getting removed anyway
-					this.setIcon(group.options.iconCreateFunction(this._childCount));
+					this.setIcon(group.options.iconCreateFunction(this));
 				}
 				return true;
 			}
